@@ -36,8 +36,11 @@ export class NetworkError extends Error {
  */
 function extractFieldName(message) {
   if (!message || typeof message !== 'string') return null;
-  const match = message.match(/^([a-zA-Z_]+)\s+(must|is|cannot|should|already)/i);
-  return match ? match[1].toLowerCase() : null;
+  const match = message.match(/^([a-zA-Z_]+)\s+(must|is|cannot|should|already|does)/i);
+  if (match) return match[1].toLowerCase();
+  // 409 duplicate: "Duplicate record: a record with this email already exists"
+  const dup = message.match(/with this ([a-z_]+) already exists/i);
+  return dup ? dup[1].toLowerCase() : null;
 }
 
 /**
@@ -95,7 +98,7 @@ export async function api(path, options = {}) {
 
     if (!res.ok) {
       const msg = (json && json.message) || `Request failed with status ${res.status}`;
-      const field = res.status === 400 ? extractFieldName(msg) : null;
+      const field = (res.status === 400 || res.status === 409) ? extractFieldName(msg) : null;
       throw new ApiError(res.status, msg, field);
     }
 

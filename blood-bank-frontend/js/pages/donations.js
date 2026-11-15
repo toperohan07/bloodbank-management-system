@@ -10,10 +10,11 @@ import { formDialog } from '../ui/form.js';
 import { confirm } from '../ui/confirm.js';
 import { notify } from '../ui/toast.js';
 import { bloodGroupBadge, donationStatusBadge } from '../ui/badge.js';
-import { formatDate, formatQuantityMl } from '../core/format.js';
+import { formatDate, formatQuantityMl, localDateString } from '../core/format.js';
 import donationsService from '../services/donations.js';
 import lookupsService from '../services/lookups.js';
-import { BLOOD_GROUPS, DONATION_STATUSES, DEFAULT_QUANTITY_ML } from '../config.js';
+import { BLOOD_GROUPS, DONATION_STATUSES, DEFAULT_QUANTITY_ML, MIN_QUANTITY_ML, MAX_QUANTITY_ML } from '../config.js';
+import donorsService from '../services/donors.js';
 import { navigate } from '../core/router.js';
 
 export default function renderDonations(params, query) {
@@ -102,10 +103,16 @@ export default function renderDonations(params, query) {
         }
       }
     ],
+    searchable: false,
     exportName: 'donations_history'
   });
 
   container.appendChild(table);
+
+  // "Record Donation" button on a donor profile links here with ?donor_id=<id>
+  const prefillDonorId = query && query.get('donor_id');
+  if (prefillDonorId) setTimeout(() => openDonationForm(prefillDonorId), 0);
+
   return container;
 }
 
@@ -118,19 +125,31 @@ async function openDonationForm(prefillDonorId = null) {
   const bankOptions = banks.map(b => ({ value: b.bank_id, label: `${b.bank_name} (${b.city || 'City'})` }));
   const staffOptions = staffList.map(s => ({ value: s.staff_id, label: `${s.staff_name} — ${s.designation || 'Staff'}` }));
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localDateString();
+
+  // If we came from a donor profile, pre-select that donor
+  let prefillOptions = [];
+  if (prefillDonorId) {
+    try {
+      const d = (await donorsService.get(prefillDonorId)).data;
+      prefillOptions = [{ value: d.donor_id, label: `${d.donor_name} (#${d.donor_id})` }];
+    } catch {
+      prefillDonorId = null;
+    }
+  }
 
   formDialog({
     title: 'Register New Donation',
+    initialValues: prefillDonorId ? { donor_id: Number(prefillDonorId) } : {},
     fields: [
       {
         name: 'donor_id',
         label: 'Donor',
         type: 'searchSelect',
         required: true,
+        options: prefillOptions,
         loadOptions: async (query) => {
-          const donors = (await import('../services/donors.js')).default;
-          const donorList = await donors.list({ search: query, limit: 10 });
+          const donorList = await donorsService.list({ search: query, limit: 10 });
           return (donorList.data || []).map(d => ({
             value: d.donor_id,
             label: `${d.donor_name} (#${d.donor_id})`,
@@ -141,7 +160,7 @@ async function openDonationForm(prefillDonorId = null) {
       { name: 'bank_id', label: 'Blood Bank', type: 'select', options: bankOptions, required: true },
       { name: 'staff_id', label: 'Staff Member', type: 'select', options: staffOptions, required: true },
       { name: 'donation_date', label: 'Donation Date', type: 'date', default: todayStr, required: true },
-      { name: 'quantity_ml', label: 'Quantity (ml)', type: 'number', default: DEFAULT_QUANTITY_ML, required: true },
+      { name: 'quantity_ml', label: 'Quantity (ml)', type: 'number', min: MIN_QUANTITY_ML, max: MAX_QUANTITY_ML, default: DEFAULT_QUANTITY_ML, required: true, help: `Between ${MIN_QUANTITY_ML} and ${MAX_QUANTITY_ML} ml` },
       { name: 'donation_status', label: 'Status', type: 'select', options: DONATION_STATUSES, default: 'Accepted', required: true }
     ],
     onSubmit: async (data) => {

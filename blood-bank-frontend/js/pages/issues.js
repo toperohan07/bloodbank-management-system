@@ -62,6 +62,7 @@ export default function renderIssues(params, query) {
       }
     ],
     fetchPage: (p, signal) => issuesService.history(p, signal),
+    searchable: false,
     rowActions: [
       {
         label: 'Slip',

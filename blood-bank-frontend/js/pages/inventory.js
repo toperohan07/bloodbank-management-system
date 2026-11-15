@@ -11,7 +11,7 @@ import { confirm } from '../ui/confirm.js';
 import { openDrawer } from '../ui/drawer.js';
 import { notify } from '../ui/toast.js';
 import { bloodGroupBadge, expiryBadge, testStatusBadge } from '../ui/badge.js';
-import { formatDate, formatRelativeDays } from '../core/format.js';
+import { formatDate, formatRelativeDays, localDateString, addDaysToDateString } from '../core/format.js';
 import inventoryService from '../services/inventory.js';
 import donationsService from '../services/donations.js';
 import lookupsService from '../services/lookups.js';
@@ -59,13 +59,15 @@ export default function renderInventory(params, query) {
   );
   container.appendChild(tabs);
 
+  // The Expiring / Expired tabs use the normal list endpoint with an expiry_status filter,
+  // so paging and the blood-group filter keep working on every tab.
   const fetchEndpoint = (p, signal) => {
     if (urlTab === 'expiring') {
       const days = (query && query.get('days')) || 30;
-      return inventoryService.expiring(days, signal);
+      return inventoryService.list({ ...p, expiry_status: 'expiring_soon', days }, signal);
     }
     if (urlTab === 'expired') {
-      return inventoryService.expired(signal);
+      return inventoryService.list({ ...p, expiry_status: 'expired' }, signal);
     }
     return inventoryService.list(p, signal);
   };
@@ -104,8 +106,9 @@ export default function renderInventory(params, query) {
     fetchPage: fetchEndpoint,
     filters: [
       { key: 'blood_group', label: 'Blood Group', type: 'select', options: BLOOD_GROUPS },
-      { key: 'expiry_status', label: 'Expiry Status', type: 'select', options: EXPIRY_STATUSES }
+      ...(urlTab === 'all' ? [{ key: 'expiry_status', label: 'Expiry Status', type: 'select', options: EXPIRY_STATUSES.filter(s => s !== 'unknown') }] : [])
     ],
+    searchable: false,
     rowActions: [
       {
         label: 'Inspect',
@@ -172,17 +175,39 @@ async function loadSummaryStrip(mount) {
 }
 
 async function openAddStockForm() {
-  const [banks, donations] = await Promise.all([
+  const [banks, donations, existingStock] = await Promise.all([
     lookupsService.getBloodBanks(),
-    donationsService.history({ limit: 100 })
+    donationsService.history({ limit: 200 }),
+    inventoryService.list({ limit: 200 })
   ]);
+
+  // Each donation can be stocked only once (one inventory row per donation)
+  const stocked = new Set((existingStock.data || []).map(i => i.donation_id));
+  const available = (donations.data || []).filter(d => !stocked.has(d.donation_id));
+  const toOption = (d) => ({
+    value: d.donation_id,
+    label: `Donation #${d.donation_id} — ${d.donor_name} (${d.blood_group})`,
+    subtitle: `Collected ${formatDate(d.donation_date)} • Bank #${d.bank_id}`,
+    donation: d
+  });
+
+  // Small helper to fill another field of the open dialog
+  const setField = (name, value) => {
+    const el = document.getElementById(name);
+    if (el) el.value = value;
+  };
+  const refreshExpiry = () => {
+    const collected = document.getElementById('collection_date')?.value;
+    const shelfLife = COMPONENT_TYPES[document.getElementById('component_type')?.value];
+    if (collected && shelfLife) setField('expiry_date', addDaysToDateString(collected, shelfLife));
+  };
 
   const bankOptions = banks.map(b => ({ value: b.bank_id, label: `${b.bank_name} (${b.city || ''})` }));
   const componentOptions = Object.keys(COMPONENT_TYPES).map(c => ({ value: c, label: `${c} (${COMPONENT_TYPES[c]}d shelf life)` }));
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localDateString();
   // Default Whole Blood expiry (+35 days)
-  const defaultExp = new Date(Date.now() + 35 * 86400000).toISOString().slice(0, 10);
+  const defaultExp = localDateString(COMPONENT_TYPES['Whole Blood']);
 
   formDialog({
     title: 'Intake Blood Stock to Inventory',
@@ -192,20 +217,32 @@ async function openAddStockForm() {
         label: 'Donation',
         type: 'searchSelect',
         required: true,
+        options: available.map(toOption),
         loadOptions: async (query) => {
-          return (donations.data || []).map(d => ({
-            value: d.donation_id,
-            label: `Donation #${d.donation_id} — ${d.donor_name} (${d.blood_group})`,
-            subtitle: `Collected ${formatDate(d.donation_date)} • Bank #${d.bank_id}`
-          }));
+          const q = (query || '').toLowerCase();
+          return available
+            .filter(d => !q || `#${d.donation_id} ${d.donor_name}`.toLowerCase().includes(q))
+            .slice(0, 30)
+            .map(toOption);
+        },
+        // Picking a donation fills in the fields that must match it
+        onChange: (value, item) => {
+          const d = item.donation;
+          setField('blood_group', d.blood_group);
+          setField('bank_id', d.bank_id);
+          setField('collection_date', d.donation_date);
+          refreshExpiry();
         }
       },
-      { name: 'blood_group', label: 'Blood Group (Locked to Donor)', type: 'select', options: BLOOD_GROUPS, required: true },
+      { name: 'blood_group', label: 'Blood Group (must match the donor)', type: 'select', options: BLOOD_GROUPS, required: true },
       { name: 'bank_id', label: 'Blood Bank Storage', type: 'select', options: bankOptions, required: true },
-      { name: 'component_type', label: 'Component Type', type: 'select', options: componentOptions, default: 'Whole Blood', required: true },
-      { name: 'units_available', label: 'Units to Intake', type: 'number', default: 1, min: 1, required: true },
+      { name: 'component_type', label: 'Component Type', type: 'select', options: componentOptions, default: 'Whole Blood', required: true, onChange: refreshExpiry },
+      { name: 'units_available', label: 'Units to Intake', type: 'number', default: 1, min: 1, max: 100, required: true },
       { name: 'collection_date', label: 'Collection Date', type: 'date', default: todayStr, required: true },
-      { name: 'expiry_date', label: 'Expiry Date', type: 'date', default: defaultExp, required: true }
+      {
+        name: 'expiry_date', label: 'Expiry Date', type: 'date', default: defaultExp, required: true,
+        validate: (value, all) => (all.collection_date && value < all.collection_date) ? 'Expiry date cannot be before the collection date' : null
+      }
     ],
     onSubmit: async (data) => {
       await inventoryService.create(data);

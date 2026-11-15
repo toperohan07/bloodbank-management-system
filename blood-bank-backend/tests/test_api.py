@@ -123,6 +123,15 @@ class GeneralAndReadTests(BaseCase):
         self.assertFalse(self.client.get("/api/donors/999999").json["success"])
         self.assertEqual(self.client.get("/api/nothing-here").status_code, 404)
 
+    def test_request_filters_by_patient_and_blood_group(self):
+        req = self.new_request(group="AB-")
+        patient_id = fetch_one("SELECT patient_id FROM bloodrequest WHERE request_id=%s", (req,))["patient_id"]
+        rows = self.client.get(f"/api/requests?patient_id={patient_id}").json["data"]
+        self.assertEqual([r["request_id"] for r in rows], [req])
+        pending = self.client.get(f"/api/requests/pending?blood_group=AB-&patient_id={patient_id}").json["data"]
+        self.assertEqual([r["request_id"] for r in pending], [req])
+        self.assertEqual(self.client.get(f"/api/requests/pending?blood_group=O%2B&patient_id={patient_id}").json["data"], [])
+
 
 class CrudTests(BaseCase):
     def test_donor_create_update_delete(self):

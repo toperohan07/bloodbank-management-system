@@ -10,7 +10,7 @@ import { formDialog } from '../ui/form.js';
 import { confirm } from '../ui/confirm.js';
 import { notify } from '../ui/toast.js';
 import { bloodGroupBadge, requestStatusBadge, urgencyBadge } from '../ui/badge.js';
-import { formatDate, pluralize } from '../core/format.js';
+import { formatDate, pluralize, localDateString } from '../core/format.js';
 import requestsService from '../services/requests.js';
 import lookupsService from '../services/lookups.js';
 import { api } from '../core/api.js';
@@ -57,7 +57,7 @@ function renderRequestList(query) {
 
   const fetchEndpoint = (p, signal) => {
     if (urlTab === 'pending') {
-      return requestsService.pending(signal);
+      return requestsService.pending(p, signal);
     }
     return requestsService.list(p, signal);
   };
@@ -111,9 +111,13 @@ function renderRequestList(query) {
                   message: 'This sample request is already fully issued. Would you like to mark its status as Fulfilled?'
                 });
                 if (ok) {
-                  await requestsService.update(row.request_id, { request_status: 'Fulfilled' });
-                  notify.success('Request marked as Fulfilled');
-                  navigate('/requests');
+                  try {
+                    await requestsService.update(row.request_id, { request_status: 'Fulfilled' });
+                    notify.success('Request marked as Fulfilled');
+                    navigate('/requests');
+                  } catch (err) {
+                    notify.error(err.message || 'Could not update the request');
+                  }
                 }
               }
             }, 'Mark Fulfilled?'));
@@ -142,8 +146,9 @@ function renderRequestList(query) {
     filters: [
       { key: 'blood_group', label: 'Blood Group', type: 'select', options: BLOOD_GROUPS },
       { key: 'urgency', label: 'Urgency', type: 'select', options: URGENCY_LEVELS },
-      { key: 'request_status', label: 'Status', type: 'select', options: REQUEST_STATUSES }
+      ...(urlTab === 'all' ? [{ key: 'request_status', label: 'Status', type: 'select', options: REQUEST_STATUSES }] : [])
     ],
+    searchable: false,
     rowActions: [
       {
         label: 'Issue Blood',
@@ -169,7 +174,7 @@ async function openRequestForm() {
   ]);
 
   const hospitalOptions = hospitals.map(h => ({ value: h.hospital_id, label: `${h.hospital_name} (${h.city || ''})` }));
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localDateString();
 
   formDialog({
     title: 'Raise Blood Request',
@@ -185,13 +190,19 @@ async function openRequestForm() {
             .map(p => ({
               value: p.patient_id,
               label: `${p.patient_name} (#${p.patient_id})`,
-              subtitle: `Group ${p.blood_group} • ${p.age || '—'} yrs`
+              subtitle: `Group ${p.blood_group} • ${p.age || '—'} yrs`,
+              bloodGroup: p.blood_group
             }));
+        },
+        // The requested group normally equals the patient's group, so pre-fill it
+        onChange: (value, item) => {
+          const el = document.getElementById('blood_group');
+          if (el && item.bloodGroup) el.value = item.bloodGroup;
         }
       },
       { name: 'hospital_id', label: 'Requesting Hospital', type: 'select', options: hospitalOptions, required: true },
       { name: 'blood_group', label: 'Blood Group', type: 'select', options: BLOOD_GROUPS, required: true },
-      { name: 'units_required', label: 'Units Required', type: 'number', min: 1, default: 1, required: true },
+      { name: 'units_required', label: 'Units Required', type: 'number', min: 1, max: 50, default: 1, required: true },
       { name: 'urgency', label: 'Urgency Level', type: 'select', options: URGENCY_LEVELS, default: 'Normal', required: true },
       { name: 'request_date', label: 'Request Date', type: 'date', default: todayStr, required: true }
     ],
@@ -203,6 +214,17 @@ async function openRequestForm() {
       }
     }
   });
+}
+
+// Runs a status change and shows the server's message if it fails (instead of failing silently).
+async function changeStatus(requestId, status, successMessage) {
+  try {
+    await requestsService.update(requestId, { request_status: status });
+    notify.success(successMessage);
+    navigate(`/requests/${requestId}`);
+  } catch (err) {
+    notify.error(err.message || 'Could not update the request');
+  }
 }
 
 async function renderRequestDetail(requestId) {
@@ -258,7 +280,6 @@ async function renderRequestDetail(requestId) {
           h('div', {},
             h('span', { className: 'stat-card__label' }, 'Patient'),
             h('div', { style: { fontSize: 'var(--text-lg)', fontWeight: 'bold' } }, req.patient_name || `Patient #${req.patient_id}`),
-            h('div', { style: { fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)' } }, `Contact: ${req.contact_number || '—'}`)
           ),
           h('div', {},
             h('span', { className: 'stat-card__label' }, 'Hospital'),
@@ -288,11 +309,7 @@ async function renderRequestDetail(requestId) {
           req.request_status === 'Pending'
             ? h('button', {
                 className: 'btn btn--secondary btn--sm',
-                onClick: async () => {
-                  await requestsService.update(req.request_id, { request_status: 'Approved' });
-                  notify.success('Request approved');
-                  navigate(`/requests/${req.request_id}`);
-                }
+                onClick: () => changeStatus(req.request_id, 'Approved', 'Request approved')
               }, '✓ Approve Request')
             : null,
           req.request_status === 'Pending' || req.request_status === 'Approved'
@@ -300,11 +317,7 @@ async function renderRequestDetail(requestId) {
                 className: 'btn btn--danger btn--sm',
                 onClick: async () => {
                   const ok = await confirm({ title: 'Reject Request', message: 'Mark this request as Rejected?', danger: true });
-                  if (ok) {
-                    await requestsService.update(req.request_id, { request_status: 'Rejected' });
-                    notify.success('Request marked as Rejected');
-                    navigate(`/requests/${req.request_id}`);
-                  }
+                  if (ok) await changeStatus(req.request_id, 'Rejected', 'Request marked as Rejected');
                 }
               }, '✕ Reject')
             : null,
@@ -313,11 +326,7 @@ async function renderRequestDetail(requestId) {
                 className: 'btn btn--secondary btn--sm',
                 onClick: async () => {
                   const ok = await confirm({ title: 'Cancel Request', message: 'Mark this request as Cancelled?', danger: true });
-                  if (ok) {
-                    await requestsService.update(req.request_id, { request_status: 'Cancelled' });
-                    notify.success('Request marked as Cancelled');
-                    navigate(`/requests/${req.request_id}`);
-                  }
+                  if (ok) await changeStatus(req.request_id, 'Cancelled', 'Request marked as Cancelled');
                 }
               }, 'Cancel Request')
             : null

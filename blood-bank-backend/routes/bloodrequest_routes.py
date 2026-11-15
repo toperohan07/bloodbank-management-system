@@ -37,20 +37,26 @@ def get_request(request_id):
     return require_row(fetch_one(REQUEST_SELECT + " AND r.request_id = %s", (request_id,)), "Blood request not found")
 
 
+def request_filters(sql, params, allowed):
+    """Add `AND r.<column> = %s` for each allowed query parameter that was sent."""
+    for arg in allowed:  # arg is always one of our own column names, never user text
+        if request.args.get(arg):
+            sql += " AND r." + arg + " = %s"
+            params.append(request.args[arg])
+    return sql, params
+
+
 @bp.get("")
 def list_requests():
-    sql, params = REQUEST_SELECT, []
-    for arg in ("blood_group", "urgency", "request_status", "hospital_id"):
-        if request.args.get(arg):
-            sql += " AND r." + arg + " = %s"  # arg from fixed tuple
-            params.append(request.args[arg])
+    sql, params = request_filters(REQUEST_SELECT, [], ("blood_group", "urgency", "request_status", "hospital_id", "patient_id"))
     return paginated("Blood requests retrieved successfully", sql, params, "ORDER BY r.request_id")
 
 
 @bp.get("/pending")
 def pending_requests():
     sql = REQUEST_SELECT + " AND r.request_status = 'Pending'"
-    return paginated("Pending requests retrieved successfully", sql, [],
+    sql, params = request_filters(sql, [], ("blood_group", "urgency", "hospital_id", "patient_id"))
+    return paginated("Pending requests retrieved successfully", sql, params,
                      "ORDER BY FIELD(r.urgency, 'Critical', 'High', 'Normal', 'Low'), r.request_date, r.request_id")
 
 

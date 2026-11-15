@@ -10,7 +10,7 @@ import { formDialog } from '../ui/form.js';
 import { confirm } from '../ui/confirm.js';
 import { notify } from '../ui/toast.js';
 import { testStatusBadge } from '../ui/badge.js';
-import { formatDate } from '../core/format.js';
+import { formatDate, localDateString } from '../core/format.js';
 import bloodtestsService from '../services/bloodtests.js';
 import donationsService from '../services/donations.js';
 import { TEST_RESULTS, OVERALL_STATUSES } from '../config.js';
@@ -133,10 +133,16 @@ export default function renderBloodTests(params, query) {
         }
       }
     ],
+    searchable: false,
     exportName: `blood_tests_${urlTab}`
   });
 
   container.appendChild(table);
+
+  // "Record Test" on the donations page links here with ?donation_id=<id>
+  const prefillDonationId = query && query.get('donation_id');
+  if (prefillDonationId) setTimeout(() => openTestForm(null, prefillDonationId), 0);
+
   return container;
 }
 
@@ -146,14 +152,44 @@ function renderTestBadge(result) {
   return h('span', { className: 'badge badge--warning' }, 'Pending');
 }
 
-async function openTestForm(existing = null) {
+// Donations that still have NO blood test (a donation can only have one), newest first.
+async function loadUntestedDonations() {
+  const [donations, tests] = await Promise.all([
+    donationsService.history({ limit: 200 }),
+    bloodtestsService.list({ limit: 200 })
+  ]);
+  const tested = new Set((tests.data || []).map(t => t.donation_id));
+  return (donations.data || []).filter(d => !tested.has(d.donation_id));
+}
+
+async function openTestForm(existing = null, prefillDonationId = null) {
   const isEdit = !!existing;
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localDateString();
+
+  let untested = [];
+  if (!isEdit) {
+    try {
+      untested = await loadUntestedDonations();
+    } catch (err) {
+      notify.error(err.message || 'Could not load donations');
+      return;
+    }
+    if (prefillDonationId && !untested.some(d => String(d.donation_id) === String(prefillDonationId))) {
+      notify.warning(`Donation #${prefillDonationId} already has a blood test (or does not exist).`);
+      prefillDonationId = null;
+    }
+  }
+  const toOption = (d) => ({
+    value: d.donation_id,
+    label: `Donation #${d.donation_id} — ${d.donor_name} (${d.blood_group})`,
+    subtitle: `${d.quantity_ml} ml • ${formatDate(d.donation_date)}`
+  });
 
   formDialog({
     title: isEdit ? `Edit Test #${existing.test_id}` : 'Record Blood Test Result',
     mode: isEdit ? 'edit' : 'create',
     initialValues: existing || {
+      donation_id: prefillDonationId ? Number(prefillDonationId) : undefined,
       test_date: todayStr,
       hiv_result: 'Negative',
       hepatitis_result: 'Negative',
@@ -167,13 +203,13 @@ async function openTestForm(existing = null) {
         type: isEdit ? 'number' : 'searchSelect',
         required: true,
         readOnly: isEdit,
+        options: untested.map(toOption),
         loadOptions: async (query) => {
-          const res = await donationsService.list({ limit: 50 });
-          return (res.data || []).map(d => ({
-            value: d.donation_id,
-            label: `Donation #${d.donation_id} — ${d.quantity_ml}ml`,
-            subtitle: `Donor #${d.donor_id} • Date: ${formatDate(d.donation_date)}`
-          }));
+          const q = (query || '').toLowerCase();
+          return untested
+            .filter(d => !q || `#${d.donation_id} ${d.donor_name}`.toLowerCase().includes(q))
+            .slice(0, 30)
+            .map(toOption);
         }
       },
       { name: 'test_date', label: 'Test Date', type: 'date', default: todayStr, required: true },
@@ -191,9 +227,11 @@ async function openTestForm(existing = null) {
       }
     ],
     onSubmit: async (data) => {
-      // Client-side rule verification
-      const isAllNegative = data.hiv_result === 'Negative' && data.hepatitis_result === 'Negative' && data.malaria_result === 'Negative';
-      if (!isAllNegative && data.overall_status === 'Safe') {
+      // Client-side rule verification. In edit mode `data` holds only the CHANGED fields,
+      // so check the full record (stored values + changes).
+      const full = { ...(existing || {}), ...data };
+      const isAllNegative = full.hiv_result === 'Negative' && full.hepatitis_result === 'Negative' && full.malaria_result === 'Negative';
+      if (!isAllNegative && full.overall_status === 'Safe') {
         throw new Error('Overall status cannot be "Safe" when any test is Positive or Pending.');
       }
 

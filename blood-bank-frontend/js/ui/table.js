@@ -87,8 +87,10 @@ export function dataTable(config) {
     });
   }
 
+  // Pages whose API endpoint has no text search can set `searchable: false` to hide the box.
+  const showSearch = config.searchable !== false;
   const toolbar = h('div', { className: 'toolbar' },
-    h('div', { className: 'toolbar__search' }, searchInput),
+    showSearch ? h('div', { className: 'toolbar__search' }, searchInput) : h('div', { className: 'toolbar__search' }),
     h('div', { className: 'toolbar__actions' },
       ...filterControls,
       refreshBtn
@@ -147,7 +149,7 @@ export function dataTable(config) {
       const queryParams = {
         page: currentPage,
         limit: pageSize,
-        search: currentSearch || undefined,
+        search: showSearch ? (currentSearch || undefined) : undefined,
         ...activeFilters
       };
 
@@ -275,7 +277,10 @@ export function dataTable(config) {
         const td = h('td', { dataset: { label: col.label } });
         const val = row[col.key];
         if (col.render) {
-          td.appendChild(col.render(val, row));
+          // Column renderers may return a DOM element OR plain text/number
+          const rendered = col.render(val, row);
+          if (rendered instanceof Node) td.appendChild(rendered);
+          else td.textContent = (rendered !== null && rendered !== undefined && rendered !== '') ? String(rendered) : '—';
         } else {
           td.textContent = val !== null && val !== undefined ? String(val) : '—';
         }

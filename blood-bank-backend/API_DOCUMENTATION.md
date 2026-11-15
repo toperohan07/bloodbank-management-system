@@ -378,10 +378,10 @@ Request object (response):
 Request fields: `patient_id`, `hospital_id` (**required**), `blood_group` (**required**), `units_required` (int ≥ 1, **required**), `request_date` (default: today), `urgency` (default `Normal`), `request_status` (default `Pending`).
 
 ### List requests – `GET /api/requests`
-Optional query: `blood_group`, `urgency`, `request_status`, `hospital_id`, `page`, `limit`. Status: 200, 400.
+Optional query: `blood_group`, `urgency`, `request_status`, `hospital_id`, `patient_id`, `page`, `limit`. Status: 200, 400.
 
 ### Pending requests – `GET /api/requests/pending`
-Requests with `request_status = Pending`, most urgent first (Critical → Low), then oldest. Optional: `page`, `limit`. Status: 200.
+Requests with `request_status = Pending`, most urgent first (Critical → Low), then oldest. Optional: `blood_group`, `urgency`, `hospital_id`, `patient_id`, `page`, `limit`. Status: 200.
 
 ### Request summary – `GET /api/requests/summary` *(not paginated)*
 ```json

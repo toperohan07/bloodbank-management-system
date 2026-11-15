@@ -28,14 +28,14 @@ export default createCrudPage({
   formFields: [
     { name: 'patient_name', label: 'Full Name', required: true },
     { name: 'blood_group', label: 'Blood Group', type: 'select', options: BLOOD_GROUPS, required: true },
-    { name: 'age', label: 'Age', type: 'number', min: 0, max: 120 },
+    { name: 'age', label: 'Age', type: 'number', min: 0, max: 120, help: 'Between 0 and 120' },
     { name: 'gender', label: 'Gender', type: 'select', options: GENDERS },
     { name: 'city', label: 'City' },
     { name: 'contact_number', label: 'Contact Phone', type: 'tel' }
   ],
   detailFields: [
     { key: 'blood_group', label: 'Blood Group', render: (g) => bloodGroupBadge(g) },
-    { key: 'age', label: 'Age', render: (a) => `${a} yrs` },
+    { key: 'age', label: 'Age', render: (a) => (a !== null && a !== undefined) ? `${a} yrs` : '—' },
     { key: 'gender', label: 'Gender' },
     { key: 'city', label: 'City' },
     { key: 'contact_number', label: 'Contact Phone' }
@@ -45,9 +45,8 @@ export default createCrudPage({
       key: 'requests',
       label: 'Patient Requests',
       render: async (id) => {
-        // API has no direct patient_id filter on /requests endpoint; fetching first page and filtering client-side
-        const res = await api('/requests', { query: { limit: 200 } });
-        const reqs = (res.data || []).filter(r => String(r.patient_id) === String(id));
+        const res = await api('/requests', { query: { patient_id: id, limit: 200 } });
+        const reqs = res.data || [];
         if (reqs.length === 0) return h('div', { style: { padding: 'var(--space-6)', textAlign: 'center' } }, 'No requests associated with this patient.');
         return h('table', { className: 'data-table' },
           h('thead', {}, h('tr', {}, h('th', {}, 'Req #'), h('th', {}, 'Hospital'), h('th', {}, 'Units'), h('th', {}, 'Status'))),

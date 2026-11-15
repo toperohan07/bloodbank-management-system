@@ -118,3 +118,30 @@ export function cleanPhoneNumber(phone) {
   if (!phone) return '';
   return phone.replace(/[^0-9+]/g, '');
 }
+
+/**
+ * Today's date in the user's LOCAL timezone as YYYY-MM-DD, optionally shifted by whole days.
+ * (new Date().toISOString() is UTC and gives the wrong day for part of the day in many timezones.)
+ * @param {number} [offsetDays=0]
+ * @returns {string}
+ */
+export function localDateString(offsetDays = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * Adds whole days to a YYYY-MM-DD string and returns a YYYY-MM-DD string (local calendar, no timezone shift).
+ * @param {string} dateStr
+ * @param {number} days
+ * @returns {string}
+ */
+export function addDaysToDateString(dateStr, days) {
+  const parts = parseDateParts(dateStr);
+  if (!parts) return '';
+  const d = new Date(parts.year, parts.month - 1, parts.day + days);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}

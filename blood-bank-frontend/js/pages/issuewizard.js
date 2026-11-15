@@ -8,7 +8,7 @@ import { h } from '../core/dom.js';
 import { api } from '../core/api.js';
 import { notify } from '../ui/toast.js';
 import { bloodGroupBadge, urgencyBadge } from '../ui/badge.js';
-import { formatDate, pluralize } from '../core/format.js';
+import { formatDate, pluralize, localDateString } from '../core/format.js';
 import requestsService from '../services/requests.js';
 import lookupsService from '../services/lookups.js';
 import issuesService from '../services/issues.js';
@@ -24,7 +24,7 @@ export default function renderIssueWizard(params, query) {
     stock: null,
     unitsToIssue: 1,
     staffId: null,
-    issueDate: new Date().toISOString().slice(0, 10),
+    issueDate: localDateString(),
     result: null
   };
 
@@ -68,8 +68,21 @@ export default function renderIssueWizard(params, query) {
     stepMount.replaceChildren(h('div', { style: { textAlign: 'center', padding: 'var(--space-6)' } }, 'Loading eligible requests...'));
 
     try {
-      const res = await requestsService.list({ limit: 100 });
-      const allRequests = res.data || [];
+      // Only requests that can still receive blood (no 100-row cut-off like a plain list would have)
+      const [pendingRes, approvedRes] = await Promise.all([
+        requestsService.list({ request_status: 'Pending', limit: 200 }),
+        requestsService.list({ request_status: 'Approved', limit: 200 })
+      ]);
+      const allRequests = [...(pendingRes.data || []), ...(approvedRes.data || [])];
+
+      // A prefilled request (?request=ID) is fetched directly so it is found even in a long list
+      if (prefillRequestId && !allRequests.some(r => String(r.request_id) === String(prefillRequestId))) {
+        try {
+          allRequests.push((await requestsService.get(prefillRequestId)).data);
+        } catch {
+          notify.error(`Request #${prefillRequestId} was not found.`);
+        }
+      }
 
       // Filter to open requests (Pending or Approved with remaining units > 0)
       const openRequests = allRequests.filter(r => {
@@ -381,11 +394,15 @@ export default function renderIssueWizard(params, query) {
     const confirmBtn = h('button', {
       className: 'btn btn--primary btn--lg',
       onClick: async () => {
-        const qty = parseInt(unitsInput.value, 10);
-        if (isNaN(qty) || qty < 1 || qty > maxIssuable) {
+        const qty = Number(unitsInput.value);
+        if (!Number.isInteger(qty) || qty < 1 || qty > maxIssuable) {
           notify.error(`Please enter a quantity between 1 and ${maxIssuable}`);
           return;
         }
+
+        // Remember what was actually chosen so the printed slip is correct
+        state.unitsToIssue = qty;
+        state.staffId = parseInt(staffSelect.value, 10);
 
         confirmBtn.disabled = true;
         confirmBtn.textContent = 'Transacting in database...';
