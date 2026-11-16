@@ -141,6 +141,7 @@ The files in `queries/` are standalone, commented demos (they are not loaded by 
 | indexes.sql | CREATE INDEX, DROP INDEX (cleanup commented), EXPLAIN |
 | security.sql | CREATE USER, GRANT, REVOKE (run as admin) |
 | transactions.sql | START TRANSACTION, COMMIT, ROLLBACK, SAVEPOINT, the blood-issue transaction |
+| demo_functions_procedures_views.sql | Evaluator demo: 6 stored functions, 6 views, 3 stored procedures (issue blood, register donation, group summary). Run from the terminal: `mysql -u root -p bloodbankdb < queries/demo_functions_procedures_views.sql` or `source` it and paste one DEMO section at a time. Uses temporary DEMO rows and deletes them at the end |
 
 Steps: open Workbench → connect → **File → Open SQL Script…** → pick a file → click the lightning-bolt **Execute** button
 (or select one statement and press `Ctrl+Enter`).
